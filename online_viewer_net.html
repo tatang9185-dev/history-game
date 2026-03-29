@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>隋唐時空大冒險</title>
+    <style>
+        :root { --main-red: #d32f2f; --gold: #ffd700; --paper: #f4e4bc; }
+        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; background-color: #8b4513; margin: 0; padding: 10px; color: #333; overflow-x: hidden; }
+        #game-outer { max-width: 600px; margin: auto; background: var(--paper); border: 4px solid #5d2e0a; border-radius: 15px; padding: 10px; position: relative; }
+        .header { background: #5d2e0a; color: white; padding: 10px; border-radius: 8px; display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 10px; }
+       
+        /* 地圖設計 */
+        #board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-bottom: 15px; }
+        .cell { aspect-ratio: 1; background: #fff; border: 1px solid #ccc; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; border-radius: 5px; position: relative; transition: 0.3s; }
+        .cell.active { background: var(--gold); border: 2px solid var(--main-red); transform: scale(1.05); z-index: 2; font-weight: bold; }
+        .cell.finish { background: #4caf50; color: white; font-weight: bold; }
+        .cell.start { background: #2196f3; color: white; }
+        .player-icon { position: absolute; font-size: 20px; top: -5px; }
+
+        /* 控制區 */
+        .controls { text-align: center; padding: 10px; background: rgba(255,255,255,0.5); border-radius: 10px; }
+        #dice-btn { background: var(--main-red); color: white; border: none; padding: 15px 40px; font-size: 20px; border-radius: 50px; box-shadow: 0 4px #9a1c1c; cursor: pointer; width: 80%; }
+        #dice-btn:active { box-shadow: 0 0px #9a1c1c; transform: translateY(4px); }
+        #msg { margin-top: 10px; font-weight: bold; min-height: 24px; color: #5d2e0a; }
+
+        /* 題目彈窗 */
+        #quiz-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; justify-content: center; align-items: center; }
+        .quiz-box { background: white; width: 90%; max-width: 400px; padding: 20px; border-radius: 15px; box-sizing: border-box; }
+        .question { font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #d32f2f; line-height: 1.4; }
+        .option { display: block; width: 100%; padding: 12px; margin: 10px 0; background: #f8f9fa; border: 2px solid #eee; border-radius: 8px; text-align: left; font-size: 16px; transition: 0.2s; }
+        .option:active { background: #e2e6ea; border-color: #adb5bd; }
+
+        .stat-val { color: var(--gold); font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="game-outer">
+    <div class="header">
+        <span>得分: <span id="score" class="stat-val">0</span></span>
+        <span>格數: <span id="pos-display" class="stat-val">0</span>/50</span>
+        <span>時間: <span id="timer" class="stat-val">15:00</span></span>
+    </div>
+
+    <div id="board"></div>
+
+    <div class="controls">
+        <button id="dice-btn" onclick="rollDice()">🎲 擲骰子前進</button>
+        <div id="msg">歡迎！目標是 15 分鐘內抵達長安。</div>
+    </div>
+</div>
+
+<div id="quiz-overlay">
+    <div class="quiz-box">
+        <div id="q-info" style="font-size: 12px; color: #666;"></div>
+        <div class="question" id="q-text"></div>
+        <div id="options"></div>
+    </div>
+</div>
+
+<script>
+    let currentPos = 0;
+    let score = 0;
+    let timeLeft = 15 * 60;
+    let gameActive = true;
+    let diceLock = false;
+
+    // --- 題庫：50 題不同題目 ---
+    const rawQuestions = [
+        ["赤壁之戰中，誰的聯軍打敗了曹操？", ["劉備、孫權", "劉備、袁紹", "孫權、司馬懿"], 0, 10],
+        ["曹丕在何處稱帝建立魏國？", ["長安", "洛陽", "建業"], 1, 10],
+        ["哪一年曹丕廢掉東漢皇帝正式稱帝？", ["208年", "220年", "266年"], 1, 20],
+        ["三國鼎立中，劉備建立的政權位於哪裡？", ["東南沿海", "北方平原", "四川及雲貴"], 2, 10],
+        ["哪位將領廢魏稱帝，建立西晉？", ["司馬昭", "司馬懿", "司馬炎"], 2, 10],
+        ["西晉在哪一年統一全國？", ["266年", "280年", "316年"], 1, 20],
+        ["西晉武帝分封宗室子弟為王，導致了什麼內亂？", ["安史之亂", "八王之亂", "黃巢之亂"], 1, 20],
+        ["西晉時期內遷的少數民族統稱為什麼？", ["五胡", "百越", "六詔"], 0, 10],
+        ["司馬睿在南方建立的政權史稱？", ["北晉", "西晉", "東晉"], 2, 10],
+        ["東晉在哪場戰役中擊敗了前秦？", ["官渡之戰", "淝水之戰", "赤壁之戰"], 1, 20],
+        ["北魏孝文帝將首都遷到了哪裡？", ["平城", "長安", "洛陽"], 2, 10],
+        ["孝文帝改革規定鮮卑人必須改穿什麼衣服？", ["漢服", "胡服", "和服"], 0, 10],
+        ["孝文帝改革規定鮮卑貴族要改為什麼？", ["漢姓", "西姓", "佛姓"], 0, 10],
+        ["南北朝時期，南方經濟開發的主要原因之一是？", ["北方人口南遷", "海外貿易發達", "氣候寒冷"], 0, 20],
+        ["隋朝哪一年滅陳，重新統一全國？", ["581年", "589年", "618年"], 1, 20],
+        ["隋文帝開創了哪種選官制度？", ["九品中正制", "察舉制", "科舉制"], 2, 20],
+        ["隋朝大運河以哪座城市為中心？", ["洛陽", "長安", "揚州"], 0, 10],
+        ["大運河的最北端是在哪裡？", ["涿郡", "餘杭", "江都"], 0, 10],
+        ["大運河的最南端是在哪裡？", ["涿郡", "餘杭", "廣州"], 1, 10],
+        ["隋朝的糧倉反映了當時？", ["社會極度貧困", "經濟高度發展", "農業完全荒廢"], 1, 20],
+        ["隋朝滅亡的直接原因是？", ["外族大規模入侵", "隋煬帝暴政", "宦官奪權"], 1, 10],
+        ["唐朝的建立者是誰？", ["李世民", "李淵", "李隆基"], 1, 10],
+        ["「貞觀之治」是哪位皇帝的治世？", ["唐高祖", "唐太宗", "唐玄宗"], 1, 10],
+        ["唐太宗時期，哪位公主遠嫁吐蕃？", ["王昭君", "文成公主", "金城公主"], 1, 10],
+        ["中國歷史上唯一的正統女皇帝是？", ["呂后", "武則天", "慈禧"], 1, 10],
+        ["唐玄宗統治前期的盛世被稱作？", ["貞觀之治", "成康之治", "開元盛世"], 2, 10],
+        ["唐朝派遣到日本的使節稱作？", ["遣唐使", "遣隋使", "遣日使"], 0, 10],
+        ["唐朝時期前往天竺求取佛經的是？", ["鑒真", "玄奘", "法顯"], 1, 10],
+        ["唐朝最著名的三彩陶器稱作？", ["唐三彩", "青花瓷", "五彩陶"], 0, 10],
+        ["唐朝文化對哪個國家的文字、建築影響深遠？", ["羅馬", "日本", "印度"], 1, 10],
+        ["唐朝由盛轉衰的轉折點是什麼？", ["安史之亂", "黃巢起義", "七國之亂"], 0, 20],
+        ["安史之亂中的「安」是指誰？", ["安重誨", "安祿山", "安慶緒"], 1, 10],
+        ["安史之亂後，唐朝陷入了什麼局面？", ["藩鎮割據", "宦官專權", "外戚干政"], 0, 20],
+        ["唐朝末年哪場起義給了唐朝致命一擊？", ["太平天國", "黃巢起義", "義和團"], 1, 20],
+        ["唐朝於哪一年正式滅亡？", ["907年", "960年", "880年"], 0, 30],
+        ["五代十國中的「五代」位於哪個流域？", ["長江流域", "黃河流域", "珠江流域"], 1, 10],
+        ["「十國」中唯一在北方的政權是？", ["後梁", "北漢", "南唐"], 1, 30],
+        ["中國古代經濟重心何時開始南移？", ["秦漢", "魏晉至五代", "明清"], 1, 20],
+        ["造成唐末五代經濟南移的主要動力是？", ["南方人多", "北方戰亂人口南遷", "南方發明了機器"], 1, 20],
+        ["隋朝哪位皇帝在位期間開鑿了大運河？", ["隋文帝", "隋煬帝", "隋廢帝"], 1, 10],
+        ["唐太宗對待少數民族採取什麼政策？", ["開明的民族政策", "武力消滅政策", "完全隔離政策"], 0, 20],
+        ["唐三彩中常見的動物形象是？", ["熊貓", "駱駝與馬", "大象"], 1, 10],
+        ["五代的第一個朝代是？", ["後唐", "後周", "後梁"], 2, 30],
+        ["魏晉南北朝民族融合為後來的哪個盛世奠基？", ["隋唐一統", "康乾盛世", "漢武盛世"], 0, 20],
+        ["「遣唐使」將唐朝的什麼制度帶回了日本？", ["三省六部制", "內閣制", "行省制"], 0, 30],
+        ["唐代著名的絲織品產地主要在？", ["北方", "四川與江南", "嶺南"], 1, 20],
+        ["唐朝末年掌握地方軍政大權的官職是？", ["太尉", "節度使", "巡撫"], 1, 10],
+        ["唐朝時期，哪位僧人東渡日本弘揚佛法？", ["玄奘", "鑒真", "空海"], 1, 20],
+        ["五代十國時期的特點是？", ["高度集權", "政權分立", "長治久安"], 1, 10],
+        ["恭喜到達終點！隋唐繁榮的主要原因是？", ["國家統一與社會安定", "閉關鎖國", "連年征戰"], 0, 30]
+    ];
+
+    // 初始化題庫物件
+    const questions = rawQuestions.map((item, index) => ({
+        id: index + 1,
+        q: item[0],
+        options: item[1],
+        correct: item[2],
+        pts: item[3]
+    }));
+
+    // 初始化地圖
+    const board = document.getElementById('board');
+    for (let i = 1; i <= 50; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.id = `cell-${i}`;
+        cell.innerHTML = `<span style="font-size:9px">${i}</span>`;
+        if (i === 1) cell.classList.add('start');
+        if (i === 50) {
+            cell.classList.add('finish');
+            cell.innerHTML += "🏁";
+        }
+        board.appendChild(cell);
+    }
+    updateUI();
+
+    // 計時器
+    const timerInterval = setInterval(() => {
+        if (!gameActive) return;
+        timeLeft--;
+        let min = Math.floor(timeLeft / 60);
+        let sec = timeLeft % 60;
+        document.getElementById('timer').innerText = `${min}:${sec < 10 ? '0' : ''}${sec}`;
+        if (timeLeft <= 0) endGame(false);
+    }, 1000);
+
+    function updateUI() {
+        document.querySelectorAll('.cell').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('.player-icon').forEach(p => p.remove());
+       
+        if (currentPos > 0) {
+            const activeCell = document.getElementById(`cell-${currentPos}`);
+            activeCell.classList.add('active');
+            const p = document.createElement('span');
+            p.className = 'player-icon';
+            p.innerText = '🏇';
+            activeCell.appendChild(p);
+        }
+        document.getElementById('pos-display').innerText = currentPos;
+    }
+
+    function rollDice() {
+        if (!gameActive || diceLock) return;
+        diceLock = true;
+        const roll = Math.floor(Math.random() * 6) + 1;
+        document.getElementById('msg').innerText = `🎲 你擲出了 ${roll} 點！`;
+       
+        setTimeout(() => {
+            currentPos += roll;
+            if (currentPos >= 50) {
+                currentPos = 50;
+                updateUI();
+                showQuiz(49); // 最後一題
+            } else {
+                updateUI();
+                showQuiz(currentPos - 1);
+            }
+        }, 600);
+    }
+
+    function showQuiz(idx) {
+        const qData = questions[idx];
+        document.getElementById('q-info').innerText = `第 ${idx + 1} 格挑戰 (${qData.pts} 分)`;
+        document.getElementById('q-text').innerText = qData.q;
+        const optContainer = document.getElementById('options');
+        optContainer.innerHTML = '';
+       
+        qData.options.forEach((opt, i) => {
+            const btn = document.createElement('button');
+            btn.className = 'option';
+            btn.innerText = opt;
+            btn.onclick = () => checkAnswer(i, qData);
+            optContainer.appendChild(btn);
+        });
+        document.getElementById('quiz-overlay').style.display = 'flex';
+    }
+
+    function checkAnswer(selected, data) {
+        document.getElementById('quiz-overlay').style.display = 'none';
+        diceLock = false;
+       
+        if (selected === data.correct) {
+            score += data.pts;
+            document.getElementById('score').innerText = score;
+            document.getElementById('msg').innerText = `✅ 答對了！獲得 ${data.pts} 分。`;
+            if (currentPos === 50) endGame(true);
+        } else {
+            currentPos = Math.max(1, currentPos - 5);
+            updateUI();
+            document.getElementById('msg').innerText = `❌ 答錯了！退後 5 格！`;
+        }
+    }
+
+    function endGame(win) {
+        gameActive = false;
+        clearInterval(timerInterval);
+        const finalTime = document.getElementById('timer').innerText;
+        const usedMin = 14 - Math.floor(timeLeft/60);
+        const usedSec = 60 - (timeLeft%60);
+       
+        setTimeout(() => {
+            if (win) {
+                alert(`🎊 成功抵達終點！\n━━━━━━━━━━━━\n🏆 最終得分：${score}\n⏱️ 遊戲用時：${usedMin}分${usedSec}秒\n━━━━━━━━━━━━\n做得好！你是隋唐歷史達人！`);
+            } else {
+                alert(`⏰ 時間到！很遺憾未能抵達長安。\n━━━━━━━━━━━━\n📝 最終得分：${score}\n再接再厲！`);
+            }
+            location.reload();
+        }, 500);
+    }
+</script>
+
+</body>
+</html>
